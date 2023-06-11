@@ -14,5 +14,10 @@ class User(Model):
             'type': 'S',
             'index': True
         },
+        {
+            'name': 'mobile',
+            'type': 'S',
+            'index': True
+        },
     ]
 

@@ -43,7 +43,34 @@ def bootstrap(name, fields, billing_mode='PAY_PER_REQUEST'):
     try:
         table = dynamodbResource.Table(name)
         tableFields = list(map(lambda field: field.get('AttributeName'), table.attribute_definitions))
-        modelFields = list(map(lambda field: field.get('name'), fields))
+        missingFields = list(filter(lambda field: field.get('name') not in tableFields, fields))
+        if missingFields:
+            AttributeDefinitions=[]
+            GlobalSecondaryIndexUpdates=[]
+            for field in missingFields:
+                AttributeDefinitions.append({
+                    'AttributeName': field.get('name'),
+                    'AttributeType': field.get('type')
+                })
+                GlobalSecondaryIndexUpdates.append({
+                    'Create': {
+                        'IndexName': f'{field.get("name")}Index',
+                        'KeySchema': [
+                            {
+                                'AttributeName': field.get('name'),
+                                'KeyType': 'HASH'
+                            }
+                            # Add more key schema attributes if needed
+                        ],
+                        'Projection': {
+                            'ProjectionType': 'ALL'  # Projection type (e.g., ALL, KEYS_ONLY, INCLUDE)
+                        },
+                    }
+                })
+            table.update(
+                AttributeDefinitions=AttributeDefinitions,
+                GlobalSecondaryIndexUpdates=GlobalSecondaryIndexUpdates,
+            )
     except Exception as e:
         try:
             AttributeDefinitions = [

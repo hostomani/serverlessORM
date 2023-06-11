@@ -10,8 +10,11 @@ newUsers = users.create([
 ])
 
 newUser = users.create({
-    'name': 'Person 3'
+    'name': 'Person 3',
+    'mobile': '914025869'
 })
+
+print(newUser.read())
 
 
 for user in newUsers:
@@ -23,12 +26,12 @@ for user in newUsers:
     })
 
 # update method can also take multiple records with id and returns True if all records updated.
-users.update([
-    {
-        'id': id,
-        'name': 'Mohammed'
-    }
-])
+# users.update([
+#     {
+#         'id': id,
+#         'name': 'Mohammed'
+#     }
+# ])
 
 # search method takes polish notation domain and returns list of records
 user_records = users.search([
