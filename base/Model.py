@@ -1,3 +1,4 @@
+import time
 import uuid
 import boto3
 import os
@@ -144,15 +145,17 @@ class Model:
                 cls._table = bootstrap(cls._name, cls._fields, cls._billing_mode) if cls._name else None
                 with cls._table.batch_writer() as batch:
                     for value in values:
-                        print(value)
+                        value['createdAt'] = str(time.time())
+                        value['updatedAt'] = str(time.time())
                         batch.put_item(Item=value)
-                        print(cls(**value))
                         records.append(cls(**value))
             except Exception as e:
                 print(e, "line 123")
         if isinstance(values, dict):
             try:
                 cls._table = bootstrap(cls._name, cls._fields, cls._billing_mode) if cls._name else None
+                values['createdAt'] = str(time.time())
+                values['updatedAt'] = str(time.time())
                 cls._table.put_item(Item=values)
                 return cls(**values)
             except Exception as e:
@@ -166,43 +169,57 @@ class Model:
         return self._read(ID)
 
     @classmethod
-    def _read(cls, ID):
-        cls._table = bootstrap(cls._name, cls._fields, cls._billing_mode) if cls._name else None
-        response = cls._table.get_item(Key={'id': ID})
-        item = response.get('Item')
-        if item:
-            return cls(**item).__dict__
-        return None
+    def _read(cls, IDS):
+        Keys=list(map(lambda ID: {'id': ID}, IDS))
+        try:
+            cls._table = bootstrap(cls._name, cls._fields, cls._billing_mode) if cls._name else None
+            response = dynamodbResource.batch_get_item(
+                RequestItems={
+                    cls._name: {
+                        'Keys': Keys
+                    }
+                }
 
-    def update(self, values):
+            )
+            items = response['Responses'][cls._name]
+            return items
+        except Exception as e:
+            raise Exception(e)
+
+    def write(self, values):
         if isinstance(values, list):
-            if self.id:
-                values.append(self.id)
-            self._update(values)
+            if any([not id for id in list(map(lambda item: item.get('id'), values))]):
+                raise Exception('One record or more missing id')
+            self._write(values)
         elif isinstance(values, dict):
-            if 'id' not in values:
-                if not self.id:
-                    return False
-                values['id'] = self.id
-            if self._update(values):
-                for key, value in values.items():
-                    setattr(self, key, value)
-                return True
-            else:
-                return False
+            if 'id' not in values and not self.id:
+                raise Exception('Missing id or not single record')
+            for key, value in values.items():
+                setattr(self, key, value)
+            return self._write(self.__dict__)
         else:
             return False
 
     @classmethod
-    def _update(cls, values):
+    def _write(cls, values):
         try:
             cls._table = bootstrap(cls._name, cls._fields, cls._billing_mode) if cls._name else None
             with cls._table.batch_writer() as batch:
                 if isinstance(values, list):
-                    for item in values:
-                        batch.put_item(Item=item)
+                    recs = cls._read(list(map(lambda rec: rec.get('id'), values)))
+                    for rec in recs:
+                        for item in values:
+                            if rec.get('id') == item.get('id'):
+                                for key, value in item.items():
+                                    rec[key] = value
+                                    rec['updatedAt'] = str(time.time())
+                                batch.put_item(Item=rec)
                 elif isinstance(values, dict):
-                    batch.put_item(Item=values)
+                    recs = cls._read([values.get('id')])
+                    for key, value in values.items():
+                        recs[0][key] = value
+                        recs[0]['updatedAt'] = str(time.time())
+                    batch.put_item(Item=recs[0])
                 else:
                     return False
             return True
