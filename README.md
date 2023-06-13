@@ -52,7 +52,23 @@ Currently available methods
         'UUID4',
         'UUID4',
     ]
-    someUsers = users.read(ids)
+    someUsers = users.read(ids) # returns list of dictionaries
+    for user in someUsers:
+        print(user.get('name'))
+```
+
+### search
+``` python
+    from models import users
+
+    domain = [
+        ('key', '=', 'value')
+    ] # currently simple query operatorssoon will add full polish-notation support
+
+    someUsers = users.search(domain) # returns list of records
+
+    for user in someUsers:
+        print(user.name) 
 ```
 
 ### write
