@@ -164,11 +164,18 @@ class Model:
             setattr(self, key, value)
 
     def create(self, values):
+        existingFields = list(map(lambda field: field.get('name'), self._fields))
         if isinstance(values, list):
             for value in values:
+                for key, val in value.items():
+                    if key not in existingFields:
+                        raise Exception(f'Invalid field {key}')
                 value['id'] = str(uuid.uuid4())
             return self._create(values)
-        if isinstance(values, object):
+        if isinstance(values, dict):
+            for key, val in values.items():
+                if key not in existingFields:
+                    raise Exception(f'Invalid field {key}')
             values['id'] = str(uuid.uuid4())
             return self._create(values)
 
@@ -195,10 +202,6 @@ class Model:
             except Exception as e:
                 print(e)
         if isinstance(values, dict):
-            existingFields = list(map(lambda field: field.get('name'), cls._fields))
-            for key, val in values.items():
-                if key not in existingFields:
-                    raise Exception(f'Invalid field {key}')
             try:
                 cls._table = bootstrap(
                     cls._name,
@@ -208,7 +211,8 @@ class Model:
 
                 values['createdAt'] = str(time.time())
                 values['updatedAt'] = str(time.time())
-                cls._table.put_item(Item=values)
+                response = cls._table.put_item(Item=values)
+                print(response)
                 return cls(**values)
             except Exception as e:
                 print(e)
