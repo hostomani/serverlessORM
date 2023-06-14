@@ -52,7 +52,13 @@ Currently available methods
         'UUID4',
         'UUID4',
     ]
-    someUsers = users.read(ids) # returns list of dictionaries
+
+    fields = [
+        'field1',
+        'field2',
+        ....
+    ]
+    someUsers = users.read(ids, fields) # returns list of dictionaries
     for user in someUsers:
         print(user.get('name'))
 ```
@@ -62,15 +68,38 @@ Currently available methods
     from models import users
 
     domain = [
-        ('key', '=', 'value')
-    ] # currently simple query operatorssoon will add full polish-notation support
-
+        ('field', '=', 'value'),
+        ....
+    ] # currently simple query operators soon will add full polish-notation support
+    fields = [
+        'field1',
+        'field2',
+        ....
+    ]
     someUsers = users.search(domain) # returns list of records
 
     for user in someUsers:
         print(user.name) 
 ```
 
+### search_read
+``` python
+    from models import users
+
+    domain = [
+        ('field', '=', 'value'),
+        ....
+    ] # currently simple query operators soon will add full polish-notation support
+    fields = [
+        'field1',
+        'field2',
+        ....
+    ]
+    someUsers = users.search(domain) # returns list of dictionaries
+
+    for user in someUsers:
+        print(user.name) 
+```
 ### write
 ``` python
     from models import users
