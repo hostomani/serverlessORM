@@ -184,6 +184,10 @@ class Model:
                 ) if cls._name else None
                 with cls._table.batch_writer() as batch:
                     for value in values:
+                        existingFields = list(map(lambda field: field.get('name'), cls._fields))
+                        for key, val in value.items():
+                            if key not in existingFields:
+                                raise Exception(f'Invalid field {key}')
                         value['createdAt'] = str(time.time())
                         value['updatedAt'] = str(time.time())
                         batch.put_item(Item=value)
@@ -191,12 +195,17 @@ class Model:
             except Exception as e:
                 print(e)
         if isinstance(values, dict):
+            existingFields = list(map(lambda field: field.get('name'), cls._fields))
+            for key, val in values.items():
+                if key not in existingFields:
+                    raise Exception(f'Invalid field {key}')
             try:
                 cls._table = bootstrap(
                     cls._name,
                     cls._fields,
                     cls._billing_mode
                 ) if cls._name else None
+
                 values['createdAt'] = str(time.time())
                 values['updatedAt'] = str(time.time())
                 cls._table.put_item(Item=values)
