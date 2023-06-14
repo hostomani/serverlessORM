@@ -2,69 +2,12 @@ import time
 import uuid
 import boto3
 import os
-
-
-def construct_polish_expression(expression):
-    if isinstance(expression, tuple):
-        operator = expression[1]
-        operand1 = f'#{expression[0]}'
-        operand2 = f':{expression[0]}'
-        if operator == 'contains':
-            raise ValueError('The "contains" operator is not supported in KeyConditionExpression.')
-        elif operator == 'in':
-            return f'{operand1} IN ({operand2})'
-        elif operator == 'between':
-            return f'{operand1} BETWEEN {operand2.split(":")[0]} AND {operand2.split(":")[1]}'
-        elif operator == 'begins_with':
-            return f'begins_with({operand1}, {operand2})'
-        else:
-            return f'{operand1} {operator} {operand2}'
-    elif isinstance(expression, list):
-        logical_operator = expression[0]
-        sub_expressions = [construct_polish_expression(sub_expression) for sub_expression in expression[1:]]
-        return f'({logical_operator} {" ".join(sub_expressions)})'
-    else:
-        raise ValueError('Invalid expression format')
-
-
-def load_env_file(file_path):
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    abs_file_path = os.path.join(script_dir, file_path)
-
-    with open(abs_file_path, 'r') as file:
-        lines = file.readlines()
-
-    for line in lines:
-        line = line.strip()
-        if line and not line.startswith('#'):
-            key, value = line.split('=', 1)
-            os.environ[key] = value
-
-
-# Specify the path to your environment file
-env_file_path = '.env'
-
-# Load the environment variables from the file
-load_env_file(env_file_path)
-
-# Access the environment variables
-aws_access_key_id = os.environ.get('aws_access_key_id')
-aws_secret_access_key = os.environ.get('aws_secret_access_key')
-region_name = os.environ.get('region_name')
-
-session = boto3.Session(
-    aws_access_key_id=aws_access_key_id,
-    aws_secret_access_key=aws_secret_access_key,
-    region_name=region_name,
-)
-
-dynamodbClient = session.client('dynamodb')
-dynamodbResource = session.resource('dynamodb')
+from dynamo import client, resource
 
 
 def bootstrap(name, fields, billing_mode='PAY_PER_REQUEST'):
     try:
-        table = dynamodbResource.Table(name)
+        table = resource.Table(name)
         tableFields = list(map(lambda field: field.get('AttributeName'), table.attribute_definitions))
         missingFields = list(filter(lambda field: field.get('name') not in tableFields, fields))
         if missingFields:
@@ -120,7 +63,7 @@ def bootstrap(name, fields, billing_mode='PAY_PER_REQUEST'):
                     'ProjectionType': 'ALL',
                 },
             }, indexFields))
-            table = dynamodbResource.create_table(
+            table = resource.create_table(
                 TableName=name,
                 KeySchema=[
                     {
@@ -246,7 +189,7 @@ class Model:
                         batch.put_item(Item=value)
                         records.append(cls(**value))
             except Exception as e:
-                print(e, "line 123")
+                print(e)
         if isinstance(values, dict):
             try:
                 cls._table = bootstrap(
@@ -277,7 +220,7 @@ class Model:
                 cls._fields,
                 cls._billing_mode
             ) if cls._name else None
-            response = dynamodbResource.batch_get_item(
+            response = resource.batch_get_item(
                 RequestItems={
                     cls._name: {
                         'Keys': Keys
@@ -399,7 +342,6 @@ class Model:
                 ExpressionAttributeNamesSet = set()
                 for field in fields:
                     ExpressionAttributeNamesSet.add(field)
-                print(ExpressionAttributeNamesSet)
                 for attributeName in ExpressionAttributeNamesSet:
                     ExpressionAttributeNames[f'#{attributeName}'] = attributeName
                 for key, val in enumerate(fields):
@@ -460,11 +402,10 @@ class Model:
                 'ExpressionAttributeNames': ExpressionAttributeNames,
                 'ExpressionAttributeValues': ExpressionAttributeValues,
                 'ProjectionExpression': ProjectionExpression,
-                'Limit': cls._limit
+                'Limit': cls._limit if not limit else limit,
             }
             if FilterExpression:
                 query_params['FilterExpression'] = FilterExpression
-            print(query_params)
             response = cls._table.query(**query_params)
             items = response.get('Items', [])
             results = []
@@ -512,7 +453,6 @@ class Model:
                 ExpressionAttributeNamesSet = set()
                 for field in fields:
                     ExpressionAttributeNamesSet.add(field)
-                print(ExpressionAttributeNamesSet)
                 for attributeName in ExpressionAttributeNamesSet:
                     ExpressionAttributeNames[f'#{attributeName}'] = attributeName
                 for key, val in enumerate(fields):
@@ -572,11 +512,10 @@ class Model:
                 'ExpressionAttributeNames': ExpressionAttributeNames,
                 'ExpressionAttributeValues': ExpressionAttributeValues,
                 'ProjectionExpression': ProjectionExpression,
-                'Limit': cls._limit
+                'Limit': cls._limit if not limit else limit,
             }
             if FilterExpression:
                 query_params['FilterExpression'] = FilterExpression
-            print(query_params)
             response = cls._table.query(**query_params)
             items = response.get('Items', [])
             results = []
