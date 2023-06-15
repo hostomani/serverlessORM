@@ -9,7 +9,7 @@ def bootstrap(name, fields, billing_mode='PAY_PER_REQUEST'):
     try:
         table = resource.Table(name)
         tableFields = list(map(lambda field: field.get('AttributeName'), table.attribute_definitions))
-        missingFields = list(filter(lambda field: field.get('name') not in tableFields, fields))
+        missingFields = list(filter(lambda field: field.get('name') not in tableFields and field.get('index'), fields))
         if missingFields:
             AttributeDefinitions = []
             GlobalSecondaryIndexUpdates = []
@@ -37,6 +37,7 @@ def bootstrap(name, fields, billing_mode='PAY_PER_REQUEST'):
                 AttributeDefinitions=AttributeDefinitions,
                 GlobalSecondaryIndexUpdates=GlobalSecondaryIndexUpdates,
             )
+        return table
     except Exception as e:
         try:
             AttributeDefinitions = [
@@ -76,10 +77,9 @@ def bootstrap(name, fields, billing_mode='PAY_PER_REQUEST'):
                 GlobalSecondaryIndexes=GlobalSecondaryIndexes,
             )
             table.wait_until_exists()
+            return table
         except Exception as e:
-            print(e)
-            return None
-    return table
+            raise Exception(e)
 
 
 class RecordSet:
@@ -200,7 +200,7 @@ class Model:
                         batch.put_item(Item=value)
                         records.append(cls(**value))
             except Exception as e:
-                print(e)
+                raise Exception(e)
         if isinstance(values, dict):
             try:
                 cls._table = bootstrap(
@@ -212,14 +212,12 @@ class Model:
                 values['createdAt'] = str(time.time())
                 values['updatedAt'] = str(time.time())
                 response = cls._table.put_item(Item=values)
-                print(response)
                 return cls(**values)
             except Exception as e:
-                print(e)
-                return cls()
+                raise Exception(e)
         return records
 
-    def read(self, IDs=None, fields = []):
+    def read(self, IDs=None, fields=None):
         IDs = IDs if IDs else self.id
         if not IDs:
             raise Exception('Missing IDs')
@@ -243,29 +241,25 @@ class Model:
                     )
                 )
             )
-
             ProjectionExpression = ''
             AttributeDefinitions = {}
-            if not fields:
-                for key, attibute in enumerate(AttributeDefinitionsList):
+
+            if fields:
+                for key, attibute in enumerate(fields):
                     AttributeDefinitions[f'#{attibute}'] = attibute
-                    ProjectionExpression += f'#{attibute}, ' if key < len(AttributeDefinitionsList) -1 else f'#{attibute}'
-            for key, attibute in enumerate(fields):
-                AttributeDefinitions[f'#{attibute}'] = attibute
-                ProjectionExpression += f'#{attibute}, ' if key < len(AttributeDefinitionsList) - 1 else f'#{attibute}'
+                    ProjectionExpression += f'#{attibute}, ' if key < len(AttributeDefinitionsList) - 1 else f'#{attibute}'
+
             response = resource.batch_get_item(
                 RequestItems={
                     cls._name: {
                         'Keys': Keys,
-                        'ProjectionExpression': ProjectionExpression,
-                        'ExpressionAttributeNames': AttributeDefinitions
                     }
                 }
             )
             items = response['Responses'][cls._name]
             return items
         except Exception as e:
-            raise Exception(e)
+            raise Exception(e, 'line 268')
 
     def write(self, values):
         if isinstance(values, list):
@@ -296,12 +290,16 @@ class Model:
                         for item in values:
                             if rec.get('id') == item.get('id'):
                                 for key, value in item.items():
+                                    if key not in rec:
+                                        raise Exception(f'{key} does not exist')
                                     rec[key] = value
                                     rec['updatedAt'] = str(time.time())
                                 batch.put_item(Item=rec)
                 elif isinstance(values, dict):
-                    recs = cls._read([values.get('id')])
+                    recs = cls._read(IDS=[values.get('id')])
                     for key, value in values.items():
+                        if key not in recs[0]:
+                            raise Exception(f'{key} does not exist')
                         recs[0][key] = value
                         recs[0]['updatedAt'] = str(time.time())
                     batch.put_item(Item=recs[0])
@@ -309,8 +307,7 @@ class Model:
                     return False
             return True
         except Exception as e:
-            print(e)
-            return False
+            raise Exception(e)
 
     def delete(self, ids=[]):
         if self.id:
@@ -334,8 +331,7 @@ class Model:
                     batch.delete_item(Key={'id': ID})
             return True
         except Exception as e:
-            print(e)
-            return False
+            raise Exception(e)
 
     def to_record(self):
         return self
@@ -354,7 +350,6 @@ class Model:
                 cls._billing_mode
             ) if cls._name else None
             TableName = cls._name
-
             ProjectionExpression = ''
             ExpressionAttributeNames = {}
             ExpressionAttributeValues = {}
@@ -369,12 +364,6 @@ class Model:
                     )
                 )
             )
-
-            if not fields:
-                for key, attribute in enumerate(AttributeDefinitionsList):
-                    ExpressionAttributeNames[f'#{attribute}'] = attribute
-                    ProjectionExpression += f'#{attribute}, ' if key < len(
-                        AttributeDefinitionsList) - 1 else f'#{attribute}'
 
             if fields:
                 if 'id' not in fields:
@@ -404,6 +393,7 @@ class Model:
             for domain in gsi_domain:
                 if domain[0] not in AttributeDefinitionsList:
                     raise Exception(f'{domain[0]} is not an index field')
+                ExpressionAttributeNames[f'#{domain[0]}'] = f'{domain[0]}'
                 ExpressionAttributeValues[f':{domain[0]}'] = domain[2]
 
             IndexName = f'{gsi_domain[0][0]}Index'
@@ -415,10 +405,8 @@ class Model:
                 'KeyConditionExpression': KeyConditionExpression,
                 'ExpressionAttributeNames': ExpressionAttributeNames,
                 'ExpressionAttributeValues': ExpressionAttributeValues,
-                'ProjectionExpression': ProjectionExpression,
                 'Limit': cls._limit if not limit else limit,
             }
-            print(query_params)
             response = cls._table.query(**query_params)
             items = response.get('Items', [])
             results = []
@@ -458,13 +446,6 @@ class Model:
                     )
                 )
             )
-
-            if not fields:
-                for key, attribute in enumerate(AttributeDefinitionsList):
-                    ExpressionAttributeNames[f'#{attribute}'] = attribute
-                    ProjectionExpression += f'#{attribute}, ' if key < len(
-                        AttributeDefinitionsList) - 1 else f'#{attribute}'
-
             if fields:
                 if 'id' not in fields:
                     fields.append('id')
@@ -490,9 +471,11 @@ class Model:
                         setattr(instance, key, value)
                     results.append(instance.__dict__)
                 return results
+
             for domain in gsi_domain:
                 if domain[0] not in AttributeDefinitionsList:
                     raise Exception(f'{domain[0]} is not an index field')
+                ExpressionAttributeNames[f'#{domain[0]}'] = f'{domain[0]}'
                 ExpressionAttributeValues[f':{domain[0]}'] = domain[2]
 
             IndexName = f'{gsi_domain[0][0]}Index'
@@ -504,7 +487,6 @@ class Model:
                 'KeyConditionExpression': KeyConditionExpression,
                 'ExpressionAttributeNames': ExpressionAttributeNames,
                 'ExpressionAttributeValues': ExpressionAttributeValues,
-                'ProjectionExpression': ProjectionExpression,
                 'Limit': cls._limit if not limit else limit,
             }
             response = cls._table.query(**query_params)
@@ -514,7 +496,7 @@ class Model:
                 instance = cls()
                 for key, value in item.items():
                     setattr(instance, key, value)
-                results.append(instance.__dict__)
+                results.append(instance)
             return results
         except Exception as e:
             raise Exception(e)
