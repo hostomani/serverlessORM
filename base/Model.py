@@ -219,13 +219,14 @@ class Model:
                 return cls()
         return records
 
-    def read(self, ID=None):
-        if not ID:
-            ID = self.id
-        return self._read(ID)
+    def read(self, IDs=None, fields = []):
+        IDs = IDs if IDs else self.id
+        if not IDs:
+            raise Exception('Missing IDs')
+        return self._read(IDs, fields)
 
     @classmethod
-    def _read(cls, IDS):
+    def _read(cls, IDS, fields=None):
         Keys = list(map(lambda ID: {'id': ID}, IDS))
         try:
             cls._table = bootstrap(
@@ -233,13 +234,33 @@ class Model:
                 cls._fields,
                 cls._billing_mode
             ) if cls._name else None
+            AttributeDefinitionsList = list(
+                filter(
+                    lambda filteredAttribute: 'password' not in filteredAttribute and 'secret' not in filteredAttribute,
+                    map(
+                        lambda attribute: attribute.get('AttributeName'),
+                        cls._table.meta.data.get('AttributeDefinitions')
+                    )
+                )
+            )
+
+            ProjectionExpression = ''
+            AttributeDefinitions = {}
+            if not fields:
+                for key, attibute in enumerate(AttributeDefinitionsList):
+                    AttributeDefinitions[f'#{attibute}'] = attibute
+                    ProjectionExpression += f'#{attibute}, ' if key < len(AttributeDefinitionsList) -1 else f'#{attibute}'
+            for key, attibute in enumerate(fields):
+                AttributeDefinitions[f'#{attibute}'] = attibute
+                ProjectionExpression += f'#{attibute}, ' if key < len(AttributeDefinitionsList) - 1 else f'#{attibute}'
             response = resource.batch_get_item(
                 RequestItems={
                     cls._name: {
-                        'Keys': Keys
+                        'Keys': Keys,
+                        'ProjectionExpression': ProjectionExpression,
+                        'ExpressionAttributeNames': AttributeDefinitions
                     }
                 }
-
             )
             items = response['Responses'][cls._name]
             return items
@@ -334,33 +355,39 @@ class Model:
             ) if cls._name else None
             TableName = cls._name
 
+            ProjectionExpression = ''
+            ExpressionAttributeNames = {}
+            ExpressionAttributeValues = {}
+
+            AttributeDefinitionsList = list(
+                filter(
+                    lambda
+                        filteredAttribute: 'password' not in filteredAttribute and 'secret' not in filteredAttribute,
+                    map(
+                        lambda attribute: attribute.get('AttributeName'),
+                        cls._table.meta.data.get('AttributeDefinitions')
+                    )
+                )
+            )
+
+            if not fields:
+                for key, attribute in enumerate(AttributeDefinitionsList):
+                    ExpressionAttributeNames[f'#{attribute}'] = attribute
+                    ProjectionExpression += f'#{attribute}, ' if key < len(
+                        AttributeDefinitionsList) - 1 else f'#{attribute}'
+
+            if fields:
+                if 'id' not in fields:
+                    fields.append('id')
+                for key, field in enumerate(fields):
+                    if field in AttributeDefinitionsList:
+                        ExpressionAttributeNames[f'#{field}'] = field
+                        ProjectionExpression += f'#{field}, ' if key < len(
+                            fields) - 1 else f'#{field}'
+
             if not gsi_domain:
-                if not fields:
-                    scan_params = {
-                        'TableName': TableName,
-                        'Limit': cls._limit if not limit else limit,
-                    }
-                    response = cls._table.scan(**scan_params)
-                    items = response.get('Items', [])
-                    results = []
-                    for item in items:
-                        instance = cls()
-                        for key, value in item.items():
-                            setattr(instance, key, value)
-                        results.append(instance)
-                    return results
-                fields.append('id')
-                ProjectionExpression = ''
-                ExpressionAttributeNames = {}
-                ExpressionAttributeNamesSet = set()
-                for field in fields:
-                    ExpressionAttributeNamesSet.add(field)
-                for attributeName in ExpressionAttributeNamesSet:
-                    ExpressionAttributeNames[f'#{attributeName}'] = attributeName
-                for key, val in enumerate(fields):
-                    ProjectionExpression += f'#{val}, ' if key < len(fields) - 1 else f'#{val}'
                 scan_params = {
-                    'TableName': cls._name,
+                    'TableName': TableName,
                     'Limit': cls._limit if not limit else limit,
                     'ProjectionExpression': ProjectionExpression,
                     'ExpressionAttributeNames': ExpressionAttributeNames
@@ -374,39 +401,13 @@ class Model:
                         setattr(instance, key, value)
                     results.append(instance)
                 return results
-
-            fields.append('id')
-            indexFields = list(
-                map(
-                    lambda filteredIndexField: filteredIndexField.get('name'),
-                    filter(
-                        lambda indexField: indexField.get('index'),
-                        cls._fields
-                    )
-                )
-            )
             for domain in gsi_domain:
-                if domain[0] not in indexFields:
+                if domain[0] not in AttributeDefinitionsList:
                     raise Exception(f'{domain[0]} is not an index field')
+                ExpressionAttributeValues[f':{domain[0]}'] = domain[2]
 
             IndexName = f'{gsi_domain[0][0]}Index'
             KeyConditionExpression = f'#{gsi_domain[0][0]} {gsi_domain[0][1]} :{gsi_domain[0][0]}'
-            ExpressionAttributeNames = {}
-            ExpressionAttributeNamesSet = set()
-            ExpressionAttributeValues = {}
-            FilterExpression = f''
-            ProjectionExpression = ''
-            for key, val in enumerate(fields):
-                ProjectionExpression += f'#{val}, ' if key < len(fields) -1 else f'#{val}'
-            for key, value in enumerate(gsi_domain):
-                if key > 0:
-                    FilterExpression += f'#{value[0]} {value[1]} :{value[0]}'
-                ExpressionAttributeNamesSet.add(value[0])
-                ExpressionAttributeValues[f':{value[0]}'] = value[2]
-            for field in fields:
-                ExpressionAttributeNamesSet.add(field)
-            for attributeName in ExpressionAttributeNamesSet:
-                ExpressionAttributeNames[f'#{attributeName}'] = attributeName
 
             query_params = {
                 'TableName': TableName,
@@ -417,8 +418,7 @@ class Model:
                 'ProjectionExpression': ProjectionExpression,
                 'Limit': cls._limit if not limit else limit,
             }
-            if FilterExpression:
-                query_params['FilterExpression'] = FilterExpression
+            print(query_params)
             response = cls._table.query(**query_params)
             items = response.get('Items', [])
             results = []
@@ -429,8 +429,7 @@ class Model:
                 results.append(instance)
             return results
         except Exception as e:
-            print(e)
-            return []
+            raise Exception(e)
 
     def search_read(self, gsi_domain=None, fields=None, limit=_limit):
         return self._search_read(gsi_domain, fields, limit)
@@ -445,33 +444,39 @@ class Model:
             ) if cls._name else None
             TableName = cls._name
 
-            if not gsi_domain:
-                if not fields:
-                    scan_params = {
-                        'TableName': TableName,
-                        'Limit': cls._limit if not limit else limit,
-                    }
-                    response = cls._table.scan(**scan_params)
-                    items = response.get('Items', [])
-                    results = []
-                    for item in items:
-                        instance = cls()
-                        for key, value in item.items():
-                            setattr(instance, key, value)
-                        results.append(instance.__dict__)
-                    return results
+            ProjectionExpression = ''
+            ExpressionAttributeNames = {}
+            ExpressionAttributeValues = {}
 
-                ProjectionExpression = ''
-                ExpressionAttributeNames = {}
-                ExpressionAttributeNamesSet = set()
-                for field in fields:
-                    ExpressionAttributeNamesSet.add(field)
-                for attributeName in ExpressionAttributeNamesSet:
-                    ExpressionAttributeNames[f'#{attributeName}'] = attributeName
-                for key, val in enumerate(fields):
-                    ProjectionExpression += f'#{val}, ' if key < len(fields) - 1 else f'#{val}'
+            AttributeDefinitionsList = list(
+                filter(
+                    lambda
+                        filteredAttribute: 'password' not in filteredAttribute and 'secret' not in filteredAttribute,
+                    map(
+                        lambda attribute: attribute.get('AttributeName'),
+                        cls._table.meta.data.get('AttributeDefinitions')
+                    )
+                )
+            )
+
+            if not fields:
+                for key, attribute in enumerate(AttributeDefinitionsList):
+                    ExpressionAttributeNames[f'#{attribute}'] = attribute
+                    ProjectionExpression += f'#{attribute}, ' if key < len(
+                        AttributeDefinitionsList) - 1 else f'#{attribute}'
+
+            if fields:
+                if 'id' not in fields:
+                    fields.append('id')
+                for key, field in enumerate(fields):
+                    if field in AttributeDefinitionsList:
+                        ExpressionAttributeNames[f'#{field}'] = field
+                        ProjectionExpression += f'#{field}, ' if key < len(
+                            fields) - 1 else f'#{field}'
+
+            if not gsi_domain:
                 scan_params = {
-                    'TableName': cls._name,
+                    'TableName': TableName,
                     'Limit': cls._limit if not limit else limit,
                     'ProjectionExpression': ProjectionExpression,
                     'ExpressionAttributeNames': ExpressionAttributeNames
@@ -485,38 +490,13 @@ class Model:
                         setattr(instance, key, value)
                     results.append(instance.__dict__)
                 return results
-
-            indexFields = list(
-                map(
-                    lambda filteredIndexField: filteredIndexField.get('name'),
-                    filter(
-                        lambda indexField: indexField.get('index'),
-                        cls._fields
-                    )
-                )
-            )
             for domain in gsi_domain:
-                if domain[0] not in indexFields:
+                if domain[0] not in AttributeDefinitionsList:
                     raise Exception(f'{domain[0]} is not an index field')
+                ExpressionAttributeValues[f':{domain[0]}'] = domain[2]
 
             IndexName = f'{gsi_domain[0][0]}Index'
             KeyConditionExpression = f'#{gsi_domain[0][0]} {gsi_domain[0][1]} :{gsi_domain[0][0]}'
-            ExpressionAttributeNames = {}
-            ExpressionAttributeNamesSet = set()
-            ExpressionAttributeValues = {}
-            FilterExpression = f''
-            ProjectionExpression = ''
-            for key, val in enumerate(fields):
-                ProjectionExpression += f'#{val}, ' if key < len(fields) -1 else f'#{val}'
-            for key, value in enumerate(gsi_domain):
-                if key > 0:
-                    FilterExpression += f'#{value[0]} {value[1]} :{value[0]}'
-                ExpressionAttributeNamesSet.add(value[0])
-                ExpressionAttributeValues[f':{value[0]}'] = value[2]
-            for field in fields:
-                ExpressionAttributeNamesSet.add(field)
-            for attributeName in ExpressionAttributeNamesSet:
-                ExpressionAttributeNames[f'#{attributeName}'] = attributeName
 
             query_params = {
                 'TableName': TableName,
@@ -527,8 +507,6 @@ class Model:
                 'ProjectionExpression': ProjectionExpression,
                 'Limit': cls._limit if not limit else limit,
             }
-            if FilterExpression:
-                query_params['FilterExpression'] = FilterExpression
             response = cls._table.query(**query_params)
             items = response.get('Items', [])
             results = []
@@ -539,5 +517,4 @@ class Model:
                 results.append(instance.__dict__)
             return results
         except Exception as e:
-            print(e)
-            return []
+            raise Exception(e)
