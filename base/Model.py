@@ -1,8 +1,9 @@
 import time
 import uuid
-import boto3
-import os
-from dynamo import client, resource
+
+from dynamo import resource
+
+defaultFields = ['id', 'createdAt', 'updatedAt']
 
 
 def bootstrap(name, fields, billing_mode='PAY_PER_REQUEST'):
@@ -163,7 +164,11 @@ class Model:
         for key, value in kwargs.items():
             setattr(self, key, value)
 
+    # def __setitem__(self, key, value):
+    #     self[key] = value
+
     def create(self, values):
+        print(values)
         existingFields = list(map(lambda field: field.get('name'), self._fields))
         if isinstance(values, list):
             for value in values:
@@ -212,7 +217,7 @@ class Model:
                 values['createdAt'] = str(time.time())
                 values['updatedAt'] = str(time.time())
                 response = cls._table.put_item(Item=values)
-                return cls(**values)
+                records.append(cls(**values))
             except Exception as e:
                 raise Exception(e)
         return records
@@ -247,7 +252,8 @@ class Model:
             if fields:
                 for key, attibute in enumerate(fields):
                     AttributeDefinitions[f'#{attibute}'] = attibute
-                    ProjectionExpression += f'#{attibute}, ' if key < len(AttributeDefinitionsList) - 1 else f'#{attibute}'
+                    ProjectionExpression += f'#{attibute}, ' if key < len(
+                        AttributeDefinitionsList) - 1 else f'#{attibute}'
 
             response = resource.batch_get_item(
                 RequestItems={
@@ -257,13 +263,20 @@ class Model:
                 }
             )
             items = response['Responses'][cls._name]
-            return items
+            results = []
+            for item in items:
+                instance = cls()
+                for key, value in item.items():
+                    setattr(instance, key, value)
+                results.append(instance)
+            return results
+        #            return items
         except Exception as e:
             raise Exception(e, 'line 268')
 
     def write(self, values):
         if isinstance(values, list):
-            if any([not id for id in list(map(lambda item: item.get('id'), values))]):
+            if any([not id for id in list(map(lambda item: item.id, values))]):
                 raise Exception('One record or more missing id')
             self._write(values)
         elif isinstance(values, dict):
@@ -285,41 +298,54 @@ class Model:
             ) if cls._name else None
             with cls._table.batch_writer() as batch:
                 if isinstance(values, list):
-                    recs = cls._read(list(map(lambda rec: rec.get('id'), values)))
+                    recs = cls._read(list(map(lambda rec: rec.id, values)))
                     for rec in recs:
                         for item in values:
-                            if rec.get('id') == item.get('id'):
+                            if rec.id == item.get('id'):
                                 for key, value in item.items():
-                                    if key not in rec:
+                                    if key not in defaultFields \
+                                            and key not in list(map(
+                                        lambda field: field.get('name'), cls._fields)
+                                    ):
                                         raise Exception(f'{key} does not exist')
-                                    rec[key] = value
-                                    rec['updatedAt'] = str(time.time())
-                                batch.put_item(Item=rec)
+                                    setattr(rec, key, value)
+                                    setattr(rec, 'updatedAt', str(time.time()))
+
+                                #                                    rec[key] = value
+                                #                                    rec['updatedAt'] = str(time.time())
+                                batch.put_item(Item=rec.__dict__)
                 elif isinstance(values, dict):
                     recs = cls._read(IDS=[values.get('id')])
                     for key, value in values.items():
-                        if key not in recs[0]:
+                        if key not in defaultFields \
+                                and key not in list(map(
+                            lambda field: field.get('name'), cls._fields)
+                        ):
                             raise Exception(f'{key} does not exist')
-                        recs[0][key] = value
-                        recs[0]['updatedAt'] = str(time.time())
-                    batch.put_item(Item=recs[0])
+                        setattr(recs[0], key, value)
+                        setattr(recs[0], 'updatedAt', str(time.time()))
+
+                    #                        recs[0][key] = value
+                    #                        recs[0]['updatedAt'] = str(time.time())
+                    batch.put_item(Item=recs[0].__dict__)
                 else:
                     return False
             return True
         except Exception as e:
             raise Exception(e)
 
-    def delete(self, ids=[]):
-        if self.id:
-            ids.append(self.id)
+    def delete(self, ids=None):
+        ids = ids if ids else []
         if not ids:
-            return False
+            if not self.id:
+                return False
+            ids.append(self.id)
         return self._delete(ids)
 
     @classmethod
     def _delete(cls, ids=None):
         try:
-            if ids is None:
+            if not ids:
                 return False
             cls._table = bootstrap(
                 cls._name,
@@ -438,8 +464,8 @@ class Model:
 
             AttributeDefinitionsList = list(
                 filter(
-                    lambda
-                        filteredAttribute: 'password' not in filteredAttribute and 'secret' not in filteredAttribute,
+                    lambda filteredAttribute:
+                        'password' not in filteredAttribute and 'secret' not in filteredAttribute,
                     map(
                         lambda attribute: attribute.get('AttributeName'),
                         cls._table.meta.data.get('AttributeDefinitions')
